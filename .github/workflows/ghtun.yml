@@ -1,0 +1,64 @@
+name: GHTUN-Runner
+on:
+  workflow_dispatch: # Manual trigger from the Actions tab
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq wget unzip
+          # Install ngrok agent
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install ngrok
+
+      - name: Install Xray Core
+        run: |
+          # Download and extract Xray binary
+          wget -O /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
+          unzip -o /tmp/xray.zip -d /tmp/xray_dist
+          sudo mv /tmp/xray_dist/xray /usr/local/bin/xray
+          sudo chmod +x /usr/local/bin/xray
+
+      - name: Configure and Start
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+        run: |
+          # Generate a random UUID and inject it into config.json
+          UUID=$(cat /proc/sys/kernel/random/uuid)
+          sed -i "s/__UUID__/$UUID/" config.json
+          
+          # Authenticate ngrok using the secret token
+          ngrok config add-authtoken $NGROK_TOKEN
+          
+          # Start Xray in the background
+          sudo /usr/local/bin/xray -c config.json &
+          
+          # Start ngrok tunnel on port 443
+          ngrok http 443 --log=stdout &
+          
+          # Wait for the tunnel to initialize
+          sleep 15
+          
+          # Fetch the public URL from ngrok's local API
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          CLEAN_URL=$(echo $PUBLIC_URL | sed 's/https:\/\///')
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ SERVER IS READY!"
+          echo "🔗 Address: $CLEAN_URL"
+          echo "🔑 UUID: $UUID"
+          echo "📝 Path: /live-chat"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "VLESS Link:"
+          echo "vless://$UUID@$CLEAN_URL:443?encryption=none&security=tls&type=ws&sni=$CLEAN_URL&path=%2Flive-chat#GHTUN_ACTION"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          # Keep the job alive for 6 hours
+          sleep 21600
